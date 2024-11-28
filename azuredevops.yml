@@ -1,0 +1,158 @@
+
+trigger:
+  none
+
+pool:
+  name: DEVPOOL
+  demands:
+    - agent.name -equals Agent-1
+
+stages:
+  - stage: compile
+    displayName: 'Maven Compile'
+    jobs:
+      - job: maven_compile
+        steps:
+          - task: Maven@4
+            inputs:
+              azureSubscription: 'ARM-SVC'
+              mavenPomFile: 'pom.xml'
+              goals: 'compile'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              javaHomeOption: 'JDKVersion'
+              mavenVersionOption: 'Default'
+              mavenAuthenticateFeed: false
+              effectivePomSkip: false
+              sonarQubeRunAnalysis: false
+              
+  - stage: test
+    displayName: 'Maven Test'
+    jobs:
+      - job: maven_test
+        displayName: 'Unit_Tests'
+        steps:
+          - task: Maven@4
+            inputs:
+              azureSubscription: 'ARM-SVC'
+              mavenPomFile: 'pom.xml'
+              goals: 'test'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              javaHomeOption: 'JDKVersion'
+              mavenVersionOption: 'Default'
+              mavenAuthenticateFeed: false
+              effectivePomSkip: false
+              sonarQubeRunAnalysis: false
+
+  - stage: trivy_fs_scan
+    displayName: 'Trivy FS Scan'
+    jobs:
+      - job: trivy_fs_scan
+        displayName: 'Trivy FS Scan'
+        steps:
+          - task: CmdLine@2
+            inputs:
+              script: 'trivy fs --format table -o fs.html .'
+
+  - stage:  sonarqube
+    displayName: 'SonarAnalysis'
+    jobs:
+      - job: sonarqube_analysis
+        steps:
+          - task: SonarQubePrepare@7
+            inputs:
+              SonarQube: 'sonar-server-svc'
+              scannerMode: 'cli'
+              configMode: 'manual'
+              cliProjectKey: 'bankapp'
+              cliProjectName: 'bankapp'
+              cliSources: '.'
+              extraProperties: 'sonar.java.binaries=.'
+          
+          - task: SonarQubeAnalyze@7
+            inputs:
+              jdkversion: 'JAVA_HOME_17_X64'
+
+  - stage: publish_artifacts
+    displayName: 'publish_Build_Artifacts'
+    jobs:
+      - job: publish_artifacts
+        displayName: 'publish_Build_Artifacts'
+        steps:
+          - task: Maven@4
+            inputs:
+              azureSubscription: 'ARM-SVC'
+              mavenPomFile: 'pom.xml'
+              goals: 'deploy'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              javaHomeOption: 'JDKVersion'
+              mavenVersionOption: 'Default'
+              mavenAuthenticateFeed: false
+              effectivePomSkip: false
+              sonarQubeRunAnalysis: false
+          - task: MavenAuthenticate@0
+            inputs:
+              artifactsFeeds: 'devshack-maven'
+             
+              
+  - stage: docker_build
+    displayName: 'Docker_Build'
+    jobs:
+      - job: docker_build
+        displayName: 'Docker_Build'
+        steps:
+          - task: CmdLine@2
+            inputs:
+              script: 'mvn package'
+          - task: Docker@2
+            inputs:
+              containerRegistry: 'docker-svc'
+              repository: 'dev'
+              command: 'build'
+              Dockerfile: '**/Dockerfile'
+              tags: 'latest'
+
+  
+  - stage: trivy_image_scan
+    displayName: 'Trivy image Scan'
+    jobs:
+      - job: trivy_image_scan
+        displayName: 'Trivy image Scan'
+        steps:
+          - task: CmdLine@2
+            inputs:
+              script: 'trivy image --format table -o image.html devopsshack.azurecr.io/dev:latest'
+
+  - stage: docker_publish
+    displayName: 'Docker_publish'
+    jobs:
+      - job: docker_publish
+        displayName: 'Docker_publish'
+        steps:
+          - task: Docker@2
+            inputs:
+              containerRegistry: 'docker-svc'
+              repository: 'dev'
+              command: 'push'
+              tags: 'latest'
+  - stage: deploy_to_aks
+    displayName: 'deploy_to_aks'
+    jobs:
+      - job: deploy_to_aks
+        displayName: 'deploy_to_aks'
+        steps:
+          - task: KubernetesManifest@1
+            inputs:
+              action: 'deploy'
+              connectionType: 'kubernetesServiceConnection'
+              kubernetesServiceConnection: 'k8-con'
+              namespace: 'default'
+              manifests: 'ds.yml'
+          
+
+  
+              
+
+  
